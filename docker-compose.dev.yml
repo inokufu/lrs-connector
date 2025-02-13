@@ -1,0 +1,24 @@
+services:
+  traefik:
+    command:
+      - "--api.insecure=true"
+      - "--api.dashboard=true"
+      - "--providers.docker=true"
+      - "--entrypoints.web.address=:80"
+      - "--log.level=DEBUG"
+    ports:
+      - "80:80"
+      - "8080:8080"
+    labels:
+      - "traefik.enable=true"
+
+
+  lrs_connector:
+    volumes:
+      - ./src:/app/src
+    command: "uvicorn src.main:app --host 0.0.0.0 --port ${LRS_CONNECTOR_PORT} --reload"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.lrsc.rule=Host(`${DOMAIN_NAME}`)"
+      - "traefik.http.routers.lrsc.entrypoints=web"
+      - "traefik.http.services.lrsc.loadbalancer.server.port=${LRS_CONNECTOR_PORT}"

@@ -1,0 +1,29 @@
+services:
+  traefik:
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--api.dashboard=false"
+      - "--accesslog=true"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--certificatesresolvers.le.acme.tlschallenge=true"
+      - "--certificatesresolvers.le.acme.email=${LETSENCRYPT_EMAIL}"
+      - "--certificatesresolvers.le.acme.storage=/letsencrypt/acme.json"
+    ports:
+      - "80:80"
+      - "443:443"
+    labels:
+      - "traefik.enable=true"
+
+
+  lrs_connector:
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.lrsc.rule=Host(`${DOMAIN_NAME}`)"
+      - "traefik.http.routers.lrsc.entrypoints=websecure"
+      - "traefik.http.routers.lrsc.tls=true"
+      - "traefik.http.routers.lrsc.tls.certresolver=le"
+      - "traefik.http.services.lrsc.loadbalancer.server.port=${LRS_CONNECTOR_PORT}"

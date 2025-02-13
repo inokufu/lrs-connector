@@ -1,0 +1,42 @@
+x-logging:
+  &default-logging
+  driver: "json-file"
+  options:
+    max-size: "100m"
+    max-file: "14"
+    compress: "true"
+
+
+# Networks
+networks:
+  lrs_connector_network:
+    driver: bridge
+
+
+services:
+  lrs_connector:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: lrs_connector
+    command: "uvicorn src.main:app --host 0.0.0.0 --port ${LRS_CONNECTOR_PORT}"
+    restart: unless-stopped
+    networks:
+      - lrs_connector_network
+    tty: true
+    labels:
+      - "traefik.enable=false"  # Overridden by dev/prod
+    logging: *default-logging
+
+  ## ----------------- Traefik -----------------
+  traefik:
+    image: traefik:v3.3.2
+    restart: unless-stopped
+    networks:
+      - lrs_connector_network
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./volumes/traefik_data:/letsencrypt
+    labels:
+      - "traefik.enable=false"
+    logging: *default-logging
