@@ -1,8 +1,14 @@
-from fastapi import Depends, FastAPI, HTTPException, Request
+from logging import basicConfig, DEBUG, getLogger, INFO
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
+from pydantic import AnyHttpUrl
 from requests import get as requests_get
-from enum import Enum
+from urllib.parse import urlparse, urlencode
 
+basicConfig(level=DEBUG)
+logger = getLogger(__name__)
+
+XAPI_ENDPOINT = 'xapi_endpoint'
 
 app = FastAPI(
     title="LRS Connector",
@@ -10,42 +16,26 @@ app = FastAPI(
     version="0.0.1",
 )
 
+@app.get("/statements", tags=["statements"])
+async def get_statements(request: Request, xapi_endpoint: AnyHttpUrl = Query(min_length=1)):
+    # Extract headers and query parameters
+    headers = {key: value for key, value in request.headers.items() if key.lower() != 'host'}
+    query_params = {key: value for key, value in request.query_params.items() if key != XAPI_ENDPOINT}
+    query_string = urlencode(query_params)
 
-class LRSEnum(str, Enum):
-    learninglocker = "learninglocker"
-    ralph = "ralph"
-
-XAPI_ENDPOINT = 'X-Experience-API-Endpoint'
-XAPI_LRS = 'X-Experience-API-LRS'
-
-
-# Dépendance pour vérifier la présence et le remplissage des en-têtes requis
-def verify_headers(request: Request):
-    if not request.headers.get(XAPI_ENDPOINT) or not request.headers.get(XAPI_LRS):
-        raise HTTPException(status_code=400, detail="Missing required headers.")
-
-
-@app.get("/statements", dependencies=[Depends(verify_headers)], tags=["statements"])
-async def get_statements(request: Request):
-    # Parse headers
-    headers = dict(request.headers)
-    headers.pop("host", None)
-
-    which_lrs: LRSEnum = headers.pop(XAPI_LRS.lower(), LRSEnum.learninglocker)
-
-    # Change xAPI path depending on the LRS, default to Learning Locker
-    if which_lrs == LRSEnum.learninglocker:
-        xapi_base_path = "/data/xAPI/statements"
-    elif which_lrs == LRSEnum.ralph:
-        xapi_base_path = "/xAPI/statements"
-    else:
-        xapi_base_path = "/data/xAPI/statements"
-
-    # Build the URL dynamically
     try:
-        lrs_base_url = headers.get(XAPI_ENDPOINT.lower())
-        api_url = f"{lrs_base_url}{xapi_base_path}" + (f"?{str(request.query_params)}" if str(request.query_params) else "")
+        # Parse the xAPI endpoint
+        parsed_url = urlparse(str(xapi_endpoint))
+
+        # Extract the base URL and the base path
+        lrs_base_url = parsed_url.scheme + "://" + parsed_url.netloc
+        xapi_base_path = parsed_url.path
+
+        # Build the URL dynamically
+        api_url = f"{lrs_base_url}{xapi_base_path}" + (f"?{query_string}" if query_string else "")
+        logger.debug("Built the URL: %s", api_url)
     except Exception as e:
+        logger.error("Couldn't build the URL: %s", e)
         raise HTTPException(status_code=500, detail="Couldn't build the URL") from e
 
     accumulated_statements = []
@@ -54,12 +44,10 @@ async def get_statements(request: Request):
         # Fetch data from the LRS
         try:
             response = requests_get(url=api_url, headers=headers)
+            response.raise_for_status()
         except Exception as e:
+            logger.error("Couldn't fetch data from the LRS: %s", e)
             raise HTTPException(status_code=500, detail="Couldn't fetch data from the LRS") from e
-
-        # Check if the response is valid
-        if response.status_code != 200:
-            raise HTTPException(status_code=response.status_code, detail=response.text)
 
         # Parse the response
         try:
@@ -68,6 +56,7 @@ async def get_statements(request: Request):
             more = fetched_data.get("more")
             api_url = more if more and more.startswith("http") else f"{lrs_base_url}{more}" if more else None
         except Exception as e:
+            logger.error("Couldn't parse the response from the LRS: %s", e)
             raise HTTPException(status_code=500, detail="Couldn't parse the response from the LRS") from e
 
     return JSONResponse(accumulated_statements)
